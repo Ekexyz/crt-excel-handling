@@ -30,7 +30,7 @@ Create Accounts from Excel Data
         TypeText            *Account Name    ${account}[account_name]    delay=1
         TypeText            Phone    ${account}[phone]    anchor=Fax    delay=1
         TypeText            Fax    ${account}[fax]    anchor=Phone    delay=1
-        TypeText            Website    ${accounts}[0][website]    delay=1
+        TypeText            Website    ${account}[website]    delay=1
 
         PickList            Type    ${account}[type]
         PickList            Industry    ${account}[industry]
