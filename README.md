@@ -5,7 +5,7 @@ The file needs to be located in the repository.
 
 ## Requirements
 
-Defined in *requirements.txt* file. Packages from this file are automatically installed in the
+Defined in *requirements.txt* file. Packages from this file are automatically installed at the
 beginning of a test run or upon starting Live Testing in QEditor.
 
 * gitpython
