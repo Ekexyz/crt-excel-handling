@@ -1,2 +1,2 @@
 pwd
-ls -latR
+ls -latR ../
