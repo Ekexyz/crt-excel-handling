@@ -1,13 +1,29 @@
 import requests
 import json
 import os
-from typing import Optional, Dict, Any
+import base64
+import mimetypes
+from typing import Optional, Dict, Any, List
 
 class CopadoRoboticTestingAPI:
     """
     A client class for interacting with Copado Robotic Testing API
-    to retrieve project and job information and upload files.
+    to retrieve project and job information and upload files (text and binary).
     """
+    
+    # Common binary file extensions
+    BINARY_EXTENSIONS = {
+        '.xlsx', '.xls', '.xlsm', '.xlsb',  # Excel files
+        '.docx', '.doc', '.docm',           # Word files
+        '.pptx', '.ppt', '.pptm',           # PowerPoint files
+        '.pdf',                             # PDF files
+        '.zip', '.rar', '.7z',              # Archive files
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff',  # Image files
+        '.mp3', '.wav', '.mp4', '.avi',     # Media files
+        '.exe', '.dll', '.so',              # Executable files
+        '.jar', '.war',                     # Java files
+        '.bin', '.dat'                      # Generic binary files
+    }
     
     def __init__(self, personal_access_token: str, project_id: str, job_id: str):
         """
@@ -112,12 +128,74 @@ class CopadoRoboticTestingAPI:
             print(f"Failed to retrieve branch info: {e}")
             return None
 
+    def _is_binary_file(self, file_path: str, force_binary: Optional[bool] = None) -> bool:
+        """
+        Determine if a file should be treated as binary.
+        
+        Args:
+            file_path (str): Path to the file
+            force_binary (bool, optional): Force binary/text mode regardless of detection
+            
+        Returns:
+            bool: True if file should be treated as binary
+        """
+        if force_binary is not None:
+            return force_binary
+            
+        # Check file extension
+        _, ext = os.path.splitext(file_path.lower())
+        if ext in self.BINARY_EXTENSIONS:
+            return True
+            
+        # Check MIME type
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type:
+            if not mime_type.startswith('text/') and mime_type != 'application/json':
+                return True
+                
+        # Try to read a small portion as text to detect binary content
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                f.read(1024)  # Try to read first 1KB as text
+            return False
+        except (UnicodeDecodeError, UnicodeError):
+            return True
+
+    def _read_file_content(self, file_path: str, is_binary: bool) -> tuple[str, str]:
+        """
+        Read file content and return content and encoding type.
+        
+        Args:
+            file_path (str): Path to the file
+            is_binary (bool): Whether to treat file as binary
+            
+        Returns:
+            tuple: (file_content, encoding_type)
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            UnicodeDecodeError: If text file can't be decoded as UTF-8
+            IOError: If file can't be read
+        """
+        if is_binary:
+            # Read as binary and base64 encode
+            with open(file_path, 'rb') as file:
+                binary_content = file.read()
+                encoded_content = base64.b64encode(binary_content).decode('ascii')
+                return encoded_content, "base64"
+        else:
+            # Read as text
+            with open(file_path, 'r', encoding='utf-8') as file:
+                text_content = file.read()
+                return text_content, "utf-8"
+
     def save_file(self, 
                   file_path: str, 
                   author_name: str, 
                   author_email: str, 
                   commit_message: str,
-                  parent_commit_hash: Optional[str] = None) -> bool:
+                  parent_commit_hash: Optional[str] = None,
+                  force_binary: Optional[bool] = None) -> bool:
         """
         Upload a file to the Copado Robotic Testing repository.
         
@@ -127,6 +205,7 @@ class CopadoRoboticTestingAPI:
             author_email (str): Email of the commit author
             commit_message (str): Commit message
             parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
+            force_binary (bool, optional): Force binary (True) or text (False) mode. If None, auto-detect
             
         Returns:
             bool: True if upload was successful, False otherwise
@@ -134,7 +213,8 @@ class CopadoRoboticTestingAPI:
         Raises:
             FileNotFoundError: If the specified file doesn't exist
             requests.RequestException: If the API request fails
-            UnicodeDecodeError: If the file cannot be decoded as UTF-8
+            UnicodeDecodeError: If text file cannot be decoded as UTF-8
+            IOError: If file cannot be read
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -147,64 +227,19 @@ class CopadoRoboticTestingAPI:
                 print("Failed to retrieve latest commit hash")
                 return False
         
-        # Read file content
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                file_content = file.read()
-        except UnicodeDecodeError as e:
-            print(f"Failed to read file as UTF-8: {e}")
-            raise
+        # Determine if file is binary and read content
+        is_binary = self._is_binary_file(file_path, force_binary)
+        file_content, encoding_type = self._read_file_content(file_path, is_binary)
         
         # Extract filename from path for the operation
         filename = os.path.basename(file_path)
         
-        # Construct the endpoint URL
-        endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
+        print(f"Uploading {'binary' if is_binary else 'text'} file: {filename} (encoding: {encoding_type})")
         
-        # Set up headers
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token
-        }
-        
-        # Set up query parameters
-        params = {
-            "branch": "main"
-        }
-        
-        # Construct the payload
-        payload = {
-            "author": {
-                "name": author_name,
-                "email": author_email
-            },
-            "commitMessage": commit_message,
-            "operations": [
-                {
-                    "encoding": "utf-8",
-                    "op": "replace",
-                    "path": filename,
-                    "value": file_content
-                }
-            ],
-            "parentCommitHash": parent_commit_hash
-        }
-        
-        try:
-            # Make the POST request
-            response = requests.post(endpoint, headers=headers, params=params, json=payload)
-            
-            # Raise an exception for bad status codes
-            response.raise_for_status()
-            
-            print(f"File '{filename}' uploaded successfully")
-            return True
-            
-        except requests.RequestException as e:
-            print(f"Failed to upload file: {e}")
-            if hasattr(e.response, 'text'):
-                print(f"Response: {e.response.text}")
-            raise
+        return self._upload_file_content(
+            filename, file_content, encoding_type, 
+            author_name, author_email, commit_message, parent_commit_hash
+        )
 
     def save_file_with_custom_path(self, 
                                    file_path: str, 
@@ -212,7 +247,8 @@ class CopadoRoboticTestingAPI:
                                    author_name: str, 
                                    author_email: str, 
                                    commit_message: str,
-                                   parent_commit_hash: Optional[str] = None) -> bool:
+                                   parent_commit_hash: Optional[str] = None,
+                                   force_binary: Optional[bool] = None) -> bool:
         """
         Upload a file to the Copado Robotic Testing repository with a custom repository path.
         
@@ -223,6 +259,7 @@ class CopadoRoboticTestingAPI:
             author_email (str): Email of the commit author
             commit_message (str): Commit message
             parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
+            force_binary (bool, optional): Force binary (True) or text (False) mode. If None, auto-detect
             
         Returns:
             bool: True if upload was successful, False otherwise
@@ -230,7 +267,8 @@ class CopadoRoboticTestingAPI:
         Raises:
             FileNotFoundError: If the specified file doesn't exist
             requests.RequestException: If the API request fails
-            UnicodeDecodeError: If the file cannot be decoded as UTF-8
+            UnicodeDecodeError: If text file cannot be decoded as UTF-8
+            IOError: If file cannot be read
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -243,14 +281,40 @@ class CopadoRoboticTestingAPI:
                 print("Failed to retrieve latest commit hash")
                 return False
         
-        # Read file content
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                file_content = file.read()
-        except UnicodeDecodeError as e:
-            print(f"Failed to read file as UTF-8: {e}")
-            raise
+        # Determine if file is binary and read content
+        is_binary = self._is_binary_file(file_path, force_binary)
+        file_content, encoding_type = self._read_file_content(file_path, is_binary)
         
+        print(f"Uploading {'binary' if is_binary else 'text'} file to: {repository_path} (encoding: {encoding_type})")
+        
+        return self._upload_file_content(
+            repository_path, file_content, encoding_type, 
+            author_name, author_email, commit_message, parent_commit_hash
+        )
+
+    def _upload_file_content(self, 
+                           repository_path: str,
+                           file_content: str,
+                           encoding_type: str,
+                           author_name: str, 
+                           author_email: str, 
+                           commit_message: str,
+                           parent_commit_hash: str) -> bool:
+        """
+        Internal method to upload file content to the API.
+        
+        Args:
+            repository_path (str): Path in the repository
+            file_content (str): File content (text or base64 encoded)
+            encoding_type (str): Either "utf-8" or "base64"
+            author_name (str): Commit author name
+            author_email (str): Commit author email
+            commit_message (str): Commit message
+            parent_commit_hash (str): Parent commit hash
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
         
@@ -274,7 +338,7 @@ class CopadoRoboticTestingAPI:
             "commitMessage": commit_message,
             "operations": [
                 {
-                    "encoding": "utf-8",
+                    "encoding": encoding_type,
                     "op": "replace",
                     "path": repository_path,
                     "value": file_content
@@ -295,6 +359,105 @@ class CopadoRoboticTestingAPI:
             
         except requests.RequestException as e:
             print(f"Failed to upload file: {e}")
+            if hasattr(e.response, 'text'):
+                print(f"Response: {e.response.text}")
+            raise
+
+    def save_multiple_files(self, 
+                           file_operations: List[Dict[str, str]], 
+                           author_name: str, 
+                           author_email: str, 
+                           commit_message: str,
+                           parent_commit_hash: Optional[str] = None) -> bool:
+        """
+        Upload multiple files in a single commit.
+        
+        Args:
+            file_operations (List[Dict]): List of file operations with keys:
+                - 'local_path': Local file path
+                - 'repo_path': Repository path (optional, uses filename if not provided)
+                - 'force_binary': Force binary mode (optional)
+            author_name (str): Name of the commit author
+            author_email (str): Email of the commit author
+            commit_message (str): Commit message
+            parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
+            
+        Returns:
+            bool: True if upload was successful, False otherwise
+        """
+        # Get parent commit hash if not provided
+        if parent_commit_hash is None:
+            parent_commit_hash = self.get_latest_commit_hash()
+            if parent_commit_hash is None:
+                print("Failed to retrieve latest commit hash")
+                return False
+        
+        operations = []
+        
+        for file_op in file_operations:
+            local_path = file_op['local_path']
+            repo_path = file_op.get('repo_path', os.path.basename(local_path))
+            force_binary = file_op.get('force_binary')
+            
+            # Check if file exists
+            if not os.path.exists(local_path):
+                print(f"Warning: File not found: {local_path}")
+                continue
+            
+            # Determine if file is binary and read content
+            is_binary = self._is_binary_file(local_path, force_binary)
+            file_content, encoding_type = self._read_file_content(local_path, is_binary)
+            
+            operations.append({
+                "encoding": encoding_type,
+                "op": "replace",
+                "path": repo_path,
+                "value": file_content
+            })
+            
+            print(f"Prepared {'binary' if is_binary else 'text'} file: {repo_path} (encoding: {encoding_type})")
+        
+        if not operations:
+            print("No valid files to upload")
+            return False
+        
+        # Construct the endpoint URL
+        endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
+        
+        # Set up headers
+        headers = {
+            "Content-Type": "application/json",
+            "X-Authorization": self.personal_access_token
+        }
+        
+        # Set up query parameters
+        params = {
+            "branch": "main"
+        }
+        
+        # Construct the payload
+        payload = {
+            "author": {
+                "name": author_name,
+                "email": author_email
+            },
+            "commitMessage": commit_message,
+            "operations": operations,
+            "parentCommitHash": parent_commit_hash
+        }
+        
+        try:
+            # Make the POST request
+            response = requests.post(endpoint, headers=headers, params=params, json=payload)
+            
+            # Raise an exception for bad status codes
+            response.raise_for_status()
+            
+            print(f"Successfully uploaded {len(operations)} files")
+            return True
+            
+        except requests.RequestException as e:
+            print(f"Failed to upload files: {e}")
             if hasattr(e.response, 'text'):
                 print(f"Response: {e.response.text}")
             raise
