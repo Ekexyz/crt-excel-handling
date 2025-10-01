@@ -27,7 +27,7 @@ class CopadoRoboticTestingAPI:
         '.bin', '.dat'                      # Generic binary files
     }
     
-    def __init__(self, personal_access_token: str, project_id: str, job_id: str):
+    def __init__(self, personal_access_token: str, project_id: str, job_id: str, debug_logging: bool = False):
         """
         Initialize the API client with authentication and project details.
         
@@ -35,12 +35,132 @@ class CopadoRoboticTestingAPI:
             personal_access_token (str): Personal access token for authentication
             project_id (str): The project ID
             job_id (str): The job ID
+            debug_logging (bool): Enable detailed debug logging for headers and cookies
         """
         self.personal_access_token = personal_access_token
         self.project_id = project_id
         self.job_id = job_id
         self.base_url = "https://api.robotic.copado.com/pace/v4"
         self._cached_headers = None
+        self.debug_logging = debug_logging
+    
+    def _log_response_debug(self, response: requests.Response, operation: str = "API Request"):
+        """
+        Log detailed debug information about the HTTP response including headers and cookies.
+        
+        Args:
+            response: The HTTP response object
+            operation: Description of the operation for logging context
+        """
+        if not self.debug_logging:
+            return
+            
+        logger.console(f"\n=== DEBUG: {operation} ===")
+        logger.console(f"Status Code: {response.status_code}")
+        logger.console(f"URL: {response.url}")
+        
+        # Log request headers (mask sensitive information)
+        logger.console("\n--- Request Headers ---")
+        for header_name, header_value in response.request.headers.items():
+            if header_name.lower() in ['authorization', 'x-authorization', 'cookie']:
+                # Mask sensitive headers
+                if header_name.lower() == 'cookie':
+                    # Show cookie names but mask values
+                    cookie_parts = header_value.split(';')
+                    masked_cookies = []
+                    for part in cookie_parts:
+                        if '=' in part:
+                            name, _ = part.split('=', 1)
+                            masked_cookies.append(f"{name.strip()}=***")
+                        else:
+                            masked_cookies.append(part.strip())
+                    logger.console(f"{header_name}: {'; '.join(masked_cookies)}")
+                else:
+                    # Mask other sensitive headers
+                    masked_value = f"{header_value[:10]}..." if len(header_value) > 10 else "***"
+                    logger.console(f"{header_name}: {masked_value}")
+            else:
+                logger.console(f"{header_name}: {header_value}")
+        
+        # Log response headers
+        logger.console("\n--- Response Headers ---")
+        for header_name, header_value in response.headers.items():
+            logger.console(f"{header_name}: {header_value}")
+        
+        # Log Set-Cookie headers with detailed parsing
+        set_cookie_headers = self._get_all_set_cookie_headers(response)
+        if set_cookie_headers:
+            logger.console("\n--- Set-Cookie Headers (Raw) ---")
+            for i, cookie_header in enumerate(set_cookie_headers, 1):
+                logger.console(f"Set-Cookie #{i}: {cookie_header}")
+        
+        # Log parsed cookies
+        parsed_cookies = self._parse_cookies_from_set_cookie_headers(response)
+        if parsed_cookies:
+            logger.console("\n--- Parsed Cookies ---")
+            for cookie_name, cookie_value in parsed_cookies.items():
+                # Show first few characters of cookie value for debugging
+                masked_value = f"{cookie_value[:10]}..." if len(cookie_value) > 10 else cookie_value
+                logger.console(f"{cookie_name}: {masked_value}")
+        
+        # Log response cookies from requests session
+        if response.cookies:
+            logger.console("\n--- Response Cookies (requests.cookies) ---")
+            for cookie in response.cookies:
+                masked_value = f"{cookie.value[:10]}..." if len(cookie.value) > 10 else cookie.value
+                logger.console(f"{cookie.name}: {masked_value} (domain: {cookie.domain}, path: {cookie.path})")
+        
+        logger.console("=== END DEBUG ===\n")
+    
+    def _get_all_set_cookie_headers(self, response: requests.Response) -> List[str]:
+        """
+        Get all Set-Cookie headers from the response, handling different ways they might be stored.
+        
+        Args:
+            response: The HTTP response object
+            
+        Returns:
+            List of Set-Cookie header values
+        """
+        set_cookie_headers = []
+        
+        # Method 1: Try get_list if available
+        if hasattr(response.headers, 'get_list'):
+            headers = response.headers.get_list('Set-Cookie')
+            if headers:
+                set_cookie_headers.extend(headers)
+        
+        # Method 2: Try single header
+        single_header = response.headers.get('Set-Cookie')
+        if single_header and single_header not in set_cookie_headers:
+            set_cookie_headers.append(single_header)
+        
+        # Method 3: Try raw response if available
+        if hasattr(response, 'raw') and hasattr(response.raw, '_original_response'):
+            try:
+                raw_headers = response.raw._original_response.msg.get_all('Set-Cookie')
+                if raw_headers:
+                    for header in raw_headers:
+                        if header not in set_cookie_headers:
+                            set_cookie_headers.append(header)
+            except AttributeError:
+                pass
+        
+        # Method 4: Try response.raw._original_response.headers if available
+        if hasattr(response, 'raw') and hasattr(response.raw, '_original_response'):
+            try:
+                if hasattr(response.raw._original_response, 'headers'):
+                    raw_headers = response.raw._original_response.headers
+                    if hasattr(raw_headers, 'get_all'):
+                        headers = raw_headers.get_all('Set-Cookie')
+                        if headers:
+                            for header in headers:
+                                if header not in set_cookie_headers:
+                                    set_cookie_headers.append(header)
+            except AttributeError:
+                pass
+        
+        return set_cookie_headers
     
     def _parse_cookies_from_set_cookie_headers(self, response: requests.Response) -> Dict[str, str]:
         """
@@ -54,16 +174,11 @@ class CopadoRoboticTestingAPI:
         """
         cookies = {}
         
-        # Get all Set-Cookie headers (there might be multiple)
-        set_cookie_headers = response.headers.get_list('Set-Cookie') if hasattr(response.headers, 'get_list') else [response.headers.get('Set-Cookie')]
+        # Get all Set-Cookie headers using the comprehensive method
+        set_cookie_headers = self._get_all_set_cookie_headers(response)
         
-        # Handle the case where get_list doesn't exist or returns None
-        if not set_cookie_headers or set_cookie_headers == [None]:
-            # Try to get raw headers if available
-            if hasattr(response, 'raw') and hasattr(response.raw, '_original_response'):
-                set_cookie_headers = response.raw._original_response.msg.get_all('Set-Cookie') or []
-            else:
-                set_cookie_headers = []
+        if self.debug_logging:
+            logger.console(f"Found {len(set_cookie_headers)} Set-Cookie headers")
         
         for header_value in set_cookie_headers:
             if header_value:
@@ -76,7 +191,13 @@ class CopadoRoboticTestingAPI:
                         name_value = cookie_part.split(';')[0]  # Get just the name=value part
                         if '=' in name_value:
                             name, value = name_value.split('=', 1)
-                            cookies[name.strip()] = value.strip()
+                            cookie_name = name.strip()
+                            cookie_value = value.strip()
+                            cookies[cookie_name] = cookie_value
+                            
+                            if self.debug_logging:
+                                masked_value = f"{cookie_value[:10]}..." if len(cookie_value) > 10 else cookie_value
+                                logger.console(f"Parsed cookie: {cookie_name} = {masked_value}")
         
         return cookies
     
@@ -90,10 +211,15 @@ class CopadoRoboticTestingAPI:
         """
         # Check if we have cached headers
         if self._cached_headers:
+            if self.debug_logging:
+                logger.console("Using cached robotic headers")
             return self._cached_headers
             
         # Use the robots endpoint like in the TypeScript code
         robots_url = f"{self.base_url}/projects/{self.project_id}/robots"
+        
+        if self.debug_logging:
+            logger.console(f"Fetching CSRF token from: {robots_url}")
         
         # Set up initial headers
         headers = {
@@ -104,6 +230,10 @@ class CopadoRoboticTestingAPI:
         try:
             # Make the GET request to fetch CSRF token
             response = requests.get(robots_url, headers=headers)
+            
+            # Log debug information about the response
+            self._log_response_debug(response, "CSRF Token Fetch")
+            
             response.raise_for_status()
             
             # Parse cookies from Set-Cookie headers
@@ -118,6 +248,9 @@ class CopadoRoboticTestingAPI:
             if not xsrf_token:
                 logger.console("Warning: PACE-XSRF-TOKEN not found in cookies")
                 logger.console(f"Available cookies: {cookies}")
+                if self.debug_logging:
+                    logger.console("Debug: Full response analysis for missing XSRF token")
+                    self._log_response_debug(response, "Missing XSRF Token Analysis")
                 return None
             
             # Build the cookie header
@@ -148,6 +281,8 @@ class CopadoRoboticTestingAPI:
             if hasattr(e, 'response') and e.response is not None:
                 logger.console(f"Response status: {e.response.status_code}")
                 logger.console(f"Response headers: {dict(e.response.headers)}")
+                if self.debug_logging:
+                    self._log_response_debug(e.response, "Error Response Analysis")
             return None
 
     def get_latest_commit_hash(self) -> Optional[str]:
@@ -175,6 +310,10 @@ class CopadoRoboticTestingAPI:
         try:
             # Make the GET request
             response = requests.get(endpoint, headers=headers, params=params)
+            
+            # Log debug information
+            self._log_response_debug(response, "Get Latest Commit Hash")
+            
             response.raise_for_status()
             
             # Parse the JSON response
@@ -183,10 +322,15 @@ class CopadoRoboticTestingAPI:
             # Extract the commit hash from the branch object
             commit_hash = data["branch"]["commitHash"]
             
+            if self.debug_logging:
+                logger.console(f"Retrieved commit hash: {commit_hash}")
+            
             return commit_hash
             
         except requests.RequestException as e:
             logger.console(f"API request failed: {e}")
+            if hasattr(e, 'response') and e.response is not None and self.debug_logging:
+                self._log_response_debug(e.response, "Get Commit Hash Error")
             # Clear cached headers on error in case they're stale
             self._cached_headers = None
             raise
@@ -222,16 +366,27 @@ class CopadoRoboticTestingAPI:
         try:
             # Make the GET request
             response = requests.get(endpoint, headers=headers, params=params)
+            
+            # Log debug information
+            self._log_response_debug(response, "Get Branch Info")
+            
             response.raise_for_status()
             
             # Parse the JSON response
             data = response.json()
             
             # Return the complete branch object
-            return data["branch"]
+            branch_info = data["branch"]
+            
+            if self.debug_logging:
+                logger.console(f"Retrieved branch info: {branch_info}")
+            
+            return branch_info
             
         except (requests.RequestException, KeyError, ValueError) as e:
             logger.console(f"Failed to retrieve branch info: {e}")
+            if isinstance(e, requests.RequestException) and hasattr(e, 'response') and e.response is not None and self.debug_logging:
+                self._log_response_debug(e.response, "Get Branch Info Error")
             # Clear cached headers on error
             self._cached_headers = None
             return None
@@ -417,6 +572,9 @@ class CopadoRoboticTestingAPI:
             # Make the POST request
             response = requests.post(endpoint, headers=headers, params=params, json=payload)
             
+            # Log debug information
+            self._log_response_debug(response, "File Upload")
+            
             # Raise an exception for bad status codes
             response.raise_for_status()
             
@@ -428,6 +586,8 @@ class CopadoRoboticTestingAPI:
             if hasattr(e, 'response') and e.response is not None:
                 logger.console(f"Response status: {e.response.status_code}")
                 logger.console(f"Response: {e.response.text}")
+                if self.debug_logging:
+                    self._log_response_debug(e.response, "File Upload Error")
             # Clear cached headers on error
             self._cached_headers = None
             raise
@@ -507,6 +667,9 @@ class CopadoRoboticTestingAPI:
             # Make the POST request
             response = requests.post(endpoint, headers=headers, params=params, json=payload)
             
+            # Log debug information
+            self._log_response_debug(response, "Multiple Files Upload")
+            
             # Raise an exception for bad status codes
             response.raise_for_status()
             
@@ -518,9 +681,25 @@ class CopadoRoboticTestingAPI:
             if hasattr(e, 'response') and e.response is not None:
                 logger.console(f"Response status: {e.response.status_code}")
                 logger.console(f"Response: {e.response.text}")
+                if self.debug_logging:
+                    self._log_response_debug(e.response, "Multiple Files Upload Error")
             # Clear cached headers on error
             self._cached_headers = None
             raise
+
+    def enable_debug_logging(self):
+        """
+        Enable detailed debug logging for headers and cookies.
+        """
+        self.debug_logging = True
+        logger.console("Debug logging enabled for HTTP headers and cookies")
+
+    def disable_debug_logging(self):
+        """
+        Disable detailed debug logging for headers and cookies.
+        """
+        self.debug_logging = False
+        logger.console("Debug logging disabled")
 
     def clear_headers_cache(self):
         """
