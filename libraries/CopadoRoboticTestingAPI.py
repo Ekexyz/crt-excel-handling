@@ -254,20 +254,23 @@ class CopadoRoboticTestingAPI:
                 return text_content, "utf-8"
 
     def save_file(self, 
-                  file_path: str, 
+                  local_file_path: str, 
                   author_name: str, 
                   author_email: str, 
                   commit_message: str,
+                  repository_path: Optional[str] = None,
                   parent_commit_hash: Optional[str] = None,
                   force_binary: Optional[bool] = None) -> bool:
         """
         Upload a file to the Copado Robotic Testing repository.
         
         Args:
-            file_path (str): Path to the file to upload
+            local_file_path (str): Local file system path to the file to upload
             author_name (str): Name of the commit author
             author_email (str): Email of the commit author
             commit_message (str): Commit message
+            repository_path (str, optional): Path where file should be stored in repository. 
+                                           If None, uses just the filename from local_file_path
             parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
             force_binary (bool, optional): Force binary (True) or text (False) mode. If None, auto-detect
             
@@ -281,8 +284,12 @@ class CopadoRoboticTestingAPI:
             IOError: If file cannot be read
         """
         # Check if file exists
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        if not os.path.exists(local_file_path):
+            raise FileNotFoundError(f"File not found: {local_file_path}")
+        
+        # Determine repository path
+        if repository_path is None:
+            repository_path = os.path.basename(local_file_path)
         
         # Get parent commit hash if not provided
         if parent_commit_hash is None:
@@ -292,16 +299,16 @@ class CopadoRoboticTestingAPI:
                 return False
         
         # Determine if file is binary and read content
-        is_binary = self._is_binary_file(file_path, force_binary)
-        file_content, encoding_type = self._read_file_content(file_path, is_binary)
+        is_binary = self._is_binary_file(local_file_path, force_binary)
+        file_content, encoding_type = self._read_file_content(local_file_path, is_binary)
         
-        # Extract filename from path for the operation
-        filename = os.path.basename(file_path)
-        
-        print(f"Uploading {'binary' if is_binary else 'text'} file: {filename} (encoding: {encoding_type})")
+        print(f"Uploading {'binary' if is_binary else 'text'} file:")
+        print(f"  Local path: {local_file_path}")
+        print(f"  Repository path: {repository_path}")
+        print(f"  Encoding: {encoding_type}")
         
         return self._upload_file_content(
-            filename, file_content, encoding_type, 
+            repository_path, file_content, encoding_type, 
             author_name, author_email, commit_message, parent_commit_hash
         )
 
@@ -316,6 +323,8 @@ class CopadoRoboticTestingAPI:
         """
         Upload a file to the Copado Robotic Testing repository with a custom repository path.
         
+        DEPRECATED: Use save_file() with repository_path parameter instead.
+        
         Args:
             file_path (str): Path to the local file to upload
             repository_path (str): Path where the file should be stored in the repository
@@ -327,33 +336,17 @@ class CopadoRoboticTestingAPI:
             
         Returns:
             bool: True if upload was successful, False otherwise
-            
-        Raises:
-            FileNotFoundError: If the specified file doesn't exist
-            requests.RequestException: If the API request fails
-            UnicodeDecodeError: If text file cannot be decoded as UTF-8
-            IOError: If file cannot be read
         """
-        # Check if file exists
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        print("Warning: save_file_with_custom_path() is deprecated. Use save_file() with repository_path parameter instead.")
         
-        # Get parent commit hash if not provided
-        if parent_commit_hash is None:
-            parent_commit_hash = self.get_latest_commit_hash()
-            if parent_commit_hash is None:
-                print("Failed to retrieve latest commit hash")
-                return False
-        
-        # Determine if file is binary and read content
-        is_binary = self._is_binary_file(file_path, force_binary)
-        file_content, encoding_type = self._read_file_content(file_path, is_binary)
-        
-        print(f"Uploading {'binary' if is_binary else 'text'} file to: {repository_path} (encoding: {encoding_type})")
-        
-        return self._upload_file_content(
-            repository_path, file_content, encoding_type, 
-            author_name, author_email, commit_message, parent_commit_hash
+        return self.save_file(
+            local_file_path=file_path,
+            repository_path=repository_path,
+            author_name=author_name,
+            author_email=author_email,
+            commit_message=commit_message,
+            parent_commit_hash=parent_commit_hash,
+            force_binary=force_binary
         )
 
     def _upload_file_content(self, 
@@ -446,7 +439,7 @@ class CopadoRoboticTestingAPI:
         
         Args:
             file_operations (List[Dict]): List of file operations with keys:
-                - 'local_path': Local file path
+                - 'local_path': Local file system path
                 - 'repo_path': Repository path (optional, uses filename if not provided)
                 - 'force_binary': Force binary mode (optional)
             author_name (str): Name of the commit author
@@ -493,7 +486,8 @@ class CopadoRoboticTestingAPI:
                 "value": file_content
             })
             
-            print(f"Prepared {'binary' if is_binary else 'text'} file: {repo_path} (encoding: {encoding_type})")
+            print(f"Prepared {'binary' if is_binary else 'text'} file:")
+            print(f"  Local: {local_path} -> Repository: {repo_path} (encoding: {encoding_type})")
         
         if not operations:
             print("No valid files to upload")
