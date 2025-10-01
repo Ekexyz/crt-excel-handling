@@ -3,6 +3,7 @@ import json
 import os
 import base64
 import mimetypes
+import re
 from typing import Optional, Dict, Any, List
 from robot.api import logger
 
@@ -43,7 +44,7 @@ class CopadoRoboticTestingAPI:
     
     def _get_xsrf_token(self) -> Optional[str]:
         """
-        Retrieve the XSRF token from the GET request headers.
+        Retrieve the XSRF token from the GET request Set-Cookie header.
         This token is required for POST requests.
         
         Returns:
@@ -78,14 +79,24 @@ class CopadoRoboticTestingAPI:
             # Raise an exception for bad status codes
             response.raise_for_status()
             
-            # Extract XSRF token from response headers
-            xsrf_token = response.headers.get('x-xsrf-token')
-            if xsrf_token:
-                self._cached_xsrf_token = xsrf_token
-                token_display = f"{xsrf_token[:10]}..." if len(xsrf_token) > 10 else xsrf_token
-                logger.console(f"Retrieved XSRF token: {token_display}")
+            # Extract XSRF token from Set-Cookie header
+            xsrf_token = None
+            set_cookie_header = response.headers.get('Set-Cookie')
+            
+            if set_cookie_header:
+                # Look for PACE-XSRF-TOKEN in the Set-Cookie header
+                # Pattern: PACE-XSRF-TOKEN=token_value; other_attributes
+                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
+                if match:
+                    xsrf_token = match.group(1)
+                    self._cached_xsrf_token = xsrf_token
+                    token_display = f"{xsrf_token[:10]}..." if len(xsrf_token) > 10 else xsrf_token
+                    logger.console(f"Retrieved XSRF token from Set-Cookie: {token_display}")
+                else:
+                    logger.console("Warning: PACE-XSRF-TOKEN not found in Set-Cookie header")
+                    logger.console(f"Set-Cookie header: {set_cookie_header}")
             else:
-                logger.console("Warning: No x-xsrf-token found in response headers")
+                logger.console("Warning: No Set-Cookie header found in response")
                 # Log available headers for debugging
                 logger.console(f"Available headers: {list(response.headers.keys())}")
             
@@ -129,10 +140,12 @@ class CopadoRoboticTestingAPI:
             # Raise an exception for bad status codes
             response.raise_for_status()
             
-            # Cache XSRF token if available
-            xsrf_token = response.headers.get('x-xsrf-token')
-            if xsrf_token:
-                self._cached_xsrf_token = xsrf_token
+            # Try to cache XSRF token from Set-Cookie if available
+            set_cookie_header = response.headers.get('Set-Cookie')
+            if set_cookie_header and not self._cached_xsrf_token:
+                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
+                if match:
+                    self._cached_xsrf_token = match.group(1)
             
             # Parse the JSON response
             data = response.json()
@@ -179,10 +192,12 @@ class CopadoRoboticTestingAPI:
             response = requests.get(endpoint, headers=headers, params=params)
             response.raise_for_status()
             
-            # Cache XSRF token if available
-            xsrf_token = response.headers.get('x-xsrf-token')
-            if xsrf_token:
-                self._cached_xsrf_token = xsrf_token
+            # Try to cache XSRF token from Set-Cookie if available
+            set_cookie_header = response.headers.get('Set-Cookie')
+            if set_cookie_header and not self._cached_xsrf_token:
+                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
+                if match:
+                    self._cached_xsrf_token = match.group(1)
             
             # Parse the JSON response
             data = response.json()
