@@ -64,4 +64,12 @@ Update Product Id
 
     # Save changes to excel and commit to git
     Save Excel Document  ${excel_worksheet}
-    Commit And Push     ${excel_worksheet}     ${git_branch}
+    Close All Excel Documents
+
+    # Upload the to Git
+    CopadoRoboticTestingAPI.Save File  
+    ...                  local_file_path=${excel_worksheet}
+    ...                  author_name=Erkka Karimäki
+    ...                  author_email=ekarimaki@copado.com
+    ...                  commit_message=Updating Excel file from CRT LT
+    ...                  repository_path=files/products_worksheet.xlsx
