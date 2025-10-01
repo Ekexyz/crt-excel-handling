@@ -45,7 +45,7 @@ Verify Products
     END
 
 Update Product Id
-    [Documentation]     Update product id to an excel sheet and save changes
+    [Documentation]     Update product id to an excel sheet and save changes.
     [Tags]              excel    products    update
     GoTo                ${webshop}
     VerifyText          Find your spirit animal
