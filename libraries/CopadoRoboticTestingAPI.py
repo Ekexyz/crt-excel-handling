@@ -4,6 +4,7 @@ import os
 import base64
 import mimetypes
 from typing import Optional, Dict, Any, List
+from robot.api import logger
 
 class CopadoRoboticTestingAPI:
     """
@@ -81,16 +82,17 @@ class CopadoRoboticTestingAPI:
             xsrf_token = response.headers.get('x-xsrf-token')
             if xsrf_token:
                 self._cached_xsrf_token = xsrf_token
-                print(f"Retrieved XSRF token: {xsrf_token[:10]}..." if len(xsrf_token) > 10 else f"Retrieved XSRF token: {xsrf_token}")
+                token_display = f"{xsrf_token[:10]}..." if len(xsrf_token) > 10 else xsrf_token
+                logger.console(f"Retrieved XSRF token: {token_display}")
             else:
-                print("Warning: No x-xsrf-token found in response headers")
-                # Print available headers for debugging
-                print("Available headers:", list(response.headers.keys()))
+                logger.console("Warning: No x-xsrf-token found in response headers")
+                # Log available headers for debugging
+                logger.console(f"Available headers: {list(response.headers.keys())}")
             
             return xsrf_token
             
         except requests.RequestException as e:
-            print(f"Failed to retrieve XSRF token: {e}")
+            logger.console(f"Failed to retrieve XSRF token: {e}")
             raise
 
     def get_latest_commit_hash(self) -> Optional[str]:
@@ -141,13 +143,13 @@ class CopadoRoboticTestingAPI:
             return commit_hash
             
         except requests.RequestException as e:
-            print(f"API request failed: {e}")
+            logger.console(f"API request failed: {e}")
             raise
         except KeyError as e:
-            print(f"Expected key not found in response: {e}")
+            logger.console(f"Expected key not found in response: {e}")
             raise
         except ValueError as e:
-            print(f"Failed to parse JSON response: {e}")
+            logger.console(f"Failed to parse JSON response: {e}")
             raise
     
     def get_branch_info(self) -> Optional[dict]:
@@ -189,7 +191,7 @@ class CopadoRoboticTestingAPI:
             return data["branch"]
             
         except (requests.RequestException, KeyError, ValueError) as e:
-            print(f"Failed to retrieve branch info: {e}")
+            logger.console(f"Failed to retrieve branch info: {e}")
             return None
 
     def _is_binary_file(self, file_path: str, force_binary: Optional[bool] = None) -> bool:
@@ -295,17 +297,17 @@ class CopadoRoboticTestingAPI:
         if parent_commit_hash is None:
             parent_commit_hash = self.get_latest_commit_hash()
             if parent_commit_hash is None:
-                print("Failed to retrieve latest commit hash")
+                logger.console("Failed to retrieve latest commit hash")
                 return False
         
         # Determine if file is binary and read content
         is_binary = self._is_binary_file(local_file_path, force_binary)
         file_content, encoding_type = self._read_file_content(local_file_path, is_binary)
         
-        print(f"Uploading {'binary' if is_binary else 'text'} file:")
-        print(f"  Local path: {local_file_path}")
-        print(f"  Repository path: {repository_path}")
-        print(f"  Encoding: {encoding_type}")
+        logger.console(f"Uploading {'binary' if is_binary else 'text'} file:")
+        logger.console(f"  Local path: {local_file_path}")
+        logger.console(f"  Repository path: {repository_path}")
+        logger.console(f"  Encoding: {encoding_type}")
         
         return self._upload_file_content(
             repository_path, file_content, encoding_type, 
@@ -337,7 +339,7 @@ class CopadoRoboticTestingAPI:
         Returns:
             bool: True if upload was successful, False otherwise
         """
-        print("Warning: save_file_with_custom_path() is deprecated. Use save_file() with repository_path parameter instead.")
+        logger.console("Warning: save_file_with_custom_path() is deprecated. Use save_file() with repository_path parameter instead.")
         
         return self.save_file(
             local_file_path=file_path,
@@ -375,7 +377,7 @@ class CopadoRoboticTestingAPI:
         # Get XSRF token - required for POST requests
         xsrf_token = self._get_xsrf_token()
         if not xsrf_token:
-            print("Failed to retrieve XSRF token - POST request may fail")
+            logger.console("Failed to retrieve XSRF token - POST request may fail")
             return False
         
         # Construct the endpoint URL
@@ -418,14 +420,14 @@ class CopadoRoboticTestingAPI:
             # Raise an exception for bad status codes
             response.raise_for_status()
             
-            print(f"File uploaded successfully to '{repository_path}'")
+            logger.console(f"File uploaded successfully to '{repository_path}'")
             return True
             
         except requests.RequestException as e:
-            print(f"Failed to upload file: {e}")
+            logger.console(f"Failed to upload file: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"Response status: {e.response.status_code}")
-                print(f"Response: {e.response.text}")
+                logger.console(f"Response status: {e.response.status_code}")
+                logger.console(f"Response: {e.response.text}")
             raise
 
     def save_multiple_files(self, 
@@ -454,13 +456,13 @@ class CopadoRoboticTestingAPI:
         if parent_commit_hash is None:
             parent_commit_hash = self.get_latest_commit_hash()
             if parent_commit_hash is None:
-                print("Failed to retrieve latest commit hash")
+                logger.console("Failed to retrieve latest commit hash")
                 return False
         
         # Get XSRF token - required for POST requests
         xsrf_token = self._get_xsrf_token()
         if not xsrf_token:
-            print("Failed to retrieve XSRF token - POST request may fail")
+            logger.console("Failed to retrieve XSRF token - POST request may fail")
             return False
         
         operations = []
@@ -472,7 +474,7 @@ class CopadoRoboticTestingAPI:
             
             # Check if file exists
             if not os.path.exists(local_path):
-                print(f"Warning: File not found: {local_path}")
+                logger.console(f"Warning: File not found: {local_path}")
                 continue
             
             # Determine if file is binary and read content
@@ -486,11 +488,11 @@ class CopadoRoboticTestingAPI:
                 "value": file_content
             })
             
-            print(f"Prepared {'binary' if is_binary else 'text'} file:")
-            print(f"  Local: {local_path} -> Repository: {repo_path} (encoding: {encoding_type})")
+            logger.console(f"Prepared {'binary' if is_binary else 'text'} file:")
+            logger.console(f"  Local: {local_path} -> Repository: {repo_path} (encoding: {encoding_type})")
         
         if not operations:
-            print("No valid files to upload")
+            logger.console("No valid files to upload")
             return False
         
         # Construct the endpoint URL
@@ -526,14 +528,14 @@ class CopadoRoboticTestingAPI:
             # Raise an exception for bad status codes
             response.raise_for_status()
             
-            print(f"Successfully uploaded {len(operations)} files")
+            logger.console(f"Successfully uploaded {len(operations)} files")
             return True
             
         except requests.RequestException as e:
-            print(f"Failed to upload files: {e}")
+            logger.console(f"Failed to upload files: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"Response status: {e.response.status_code}")
-                print(f"Response: {e.response.text}")
+                logger.console(f"Response status: {e.response.status_code}")
+                logger.console(f"Response: {e.response.text}")
             raise
 
     def clear_xsrf_cache(self):
@@ -541,4 +543,4 @@ class CopadoRoboticTestingAPI:
         Clear the cached XSRF token. Useful if the token expires or becomes invalid.
         """
         self._cached_xsrf_token = None
-        print("XSRF token cache cleared")
+        logger.console("XSRF token cache cleared")
