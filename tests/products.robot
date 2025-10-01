@@ -1,7 +1,11 @@
 *** Settings ***
 Resource                ../resources/common.resource
 Library                 ExcelLibrary
-Library                 ../libraries/CopadoRoboticTestingAPI.py  personal_access_token=${pat}  project_id=75868  job_id=159936
+Library                 ../libraries/CopadoRoboticTestingAPI.py
+...                     personal_access_token=${pat}
+...                     project_id=75868
+...                     job_id=159936
+...                     debug_logging=True
 Test Teardown           Close All Excel Documents
 Suite Setup             Setup Browser
 Suite Teardown          End Suite
