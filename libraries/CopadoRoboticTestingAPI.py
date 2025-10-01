@@ -38,7 +38,61 @@ class CopadoRoboticTestingAPI:
         self.project_id = project_id
         self.job_id = job_id
         self.base_url = "https://api.robotic.copado.com/pace/v4"
+        self._cached_xsrf_token = None
     
+    def _get_xsrf_token(self) -> Optional[str]:
+        """
+        Retrieve the XSRF token from the GET request headers.
+        This token is required for POST requests.
+        
+        Returns:
+            str: The XSRF token, or None if not found
+            
+        Raises:
+            requests.RequestException: If the API request fails
+        """
+        # Check if we have a cached token
+        if self._cached_xsrf_token:
+            return self._cached_xsrf_token
+            
+        # Construct the endpoint URL
+        endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files"
+        
+        # Set up headers
+        headers = {
+            "Content-Type": "application/json",
+            "X-Authorization": self.personal_access_token
+        }
+        
+        # Set up query parameters
+        params = {
+            "branch": "main",
+            "sharedCredentials": "true"
+        }
+        
+        try:
+            # Make the GET request
+            response = requests.get(endpoint, headers=headers, params=params)
+            
+            # Raise an exception for bad status codes
+            response.raise_for_status()
+            
+            # Extract XSRF token from response headers
+            xsrf_token = response.headers.get('x-xsrf-token')
+            if xsrf_token:
+                self._cached_xsrf_token = xsrf_token
+                print(f"Retrieved XSRF token: {xsrf_token[:10]}..." if len(xsrf_token) > 10 else f"Retrieved XSRF token: {xsrf_token}")
+            else:
+                print("Warning: No x-xsrf-token found in response headers")
+                # Print available headers for debugging
+                print("Available headers:", list(response.headers.keys()))
+            
+            return xsrf_token
+            
+        except requests.RequestException as e:
+            print(f"Failed to retrieve XSRF token: {e}")
+            raise
+
     def get_latest_commit_hash(self) -> Optional[str]:
         """
         Retrieve the latest commit hash from the project's main branch.
@@ -72,6 +126,11 @@ class CopadoRoboticTestingAPI:
             
             # Raise an exception for bad status codes
             response.raise_for_status()
+            
+            # Cache XSRF token if available
+            xsrf_token = response.headers.get('x-xsrf-token')
+            if xsrf_token:
+                self._cached_xsrf_token = xsrf_token
             
             # Parse the JSON response
             data = response.json()
@@ -117,6 +176,11 @@ class CopadoRoboticTestingAPI:
             # Make the GET request
             response = requests.get(endpoint, headers=headers, params=params)
             response.raise_for_status()
+            
+            # Cache XSRF token if available
+            xsrf_token = response.headers.get('x-xsrf-token')
+            if xsrf_token:
+                self._cached_xsrf_token = xsrf_token
             
             # Parse the JSON response
             data = response.json()
@@ -315,13 +379,20 @@ class CopadoRoboticTestingAPI:
         Returns:
             bool: True if successful, False otherwise
         """
+        # Get XSRF token - required for POST requests
+        xsrf_token = self._get_xsrf_token()
+        if not xsrf_token:
+            print("Failed to retrieve XSRF token - POST request may fail")
+            return False
+        
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
         
-        # Set up headers
+        # Set up headers including XSRF token
         headers = {
             "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token
+            "X-Authorization": self.personal_access_token,
+            "x-xsrf-token": xsrf_token
         }
         
         # Set up query parameters
@@ -359,7 +430,8 @@ class CopadoRoboticTestingAPI:
             
         except requests.RequestException as e:
             print(f"Failed to upload file: {e}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Response status: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
             raise
 
@@ -391,6 +463,12 @@ class CopadoRoboticTestingAPI:
             if parent_commit_hash is None:
                 print("Failed to retrieve latest commit hash")
                 return False
+        
+        # Get XSRF token - required for POST requests
+        xsrf_token = self._get_xsrf_token()
+        if not xsrf_token:
+            print("Failed to retrieve XSRF token - POST request may fail")
+            return False
         
         operations = []
         
@@ -424,10 +502,11 @@ class CopadoRoboticTestingAPI:
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
         
-        # Set up headers
+        # Set up headers including XSRF token
         headers = {
             "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token
+            "X-Authorization": self.personal_access_token,
+            "x-xsrf-token": xsrf_token
         }
         
         # Set up query parameters
@@ -458,6 +537,14 @@ class CopadoRoboticTestingAPI:
             
         except requests.RequestException as e:
             print(f"Failed to upload files: {e}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Response status: {e.response.status_code}")
                 print(f"Response: {e.response.text}")
             raise
+
+    def clear_xsrf_cache(self):
+        """
+        Clear the cached XSRF token. Useful if the token expires or becomes invalid.
+        """
+        self._cached_xsrf_token = None
+        print("XSRF token cache cleared")
