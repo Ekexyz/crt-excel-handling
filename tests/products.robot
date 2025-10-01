@@ -14,6 +14,13 @@ ${git_branch}           main
 
 
 *** Test Cases ***
+Testing
+    [Documentation]
+    [Tags]
+    ${ch}=    Get Latest Commit Hash
+    ${cc}=    Get Branch Info
+
+
 Verify Products
     [Documentation]     Read product names from excel sheet and verify that those can be found from a webshop page
     ...                 ExcelLibrary keyword documentation:
