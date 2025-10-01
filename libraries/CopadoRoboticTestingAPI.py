@@ -40,71 +40,115 @@ class CopadoRoboticTestingAPI:
         self.project_id = project_id
         self.job_id = job_id
         self.base_url = "https://api.robotic.copado.com/pace/v4"
-        self._cached_xsrf_token = None
+        self._cached_headers = None
     
-    def _get_xsrf_token(self) -> Optional[str]:
+    def _parse_cookies_from_set_cookie_headers(self, response: requests.Response) -> Dict[str, str]:
         """
-        Retrieve the XSRF token from the GET request Set-Cookie header.
-        This token is required for POST requests.
+        Parse cookies from Set-Cookie headers.
+        
+        Args:
+            response: The HTTP response object
+            
+        Returns:
+            dict: Dictionary mapping cookie names to values
+        """
+        cookies = {}
+        
+        # Get all Set-Cookie headers (there might be multiple)
+        set_cookie_headers = response.headers.get_list('Set-Cookie') if hasattr(response.headers, 'get_list') else [response.headers.get('Set-Cookie')]
+        
+        # Handle the case where get_list doesn't exist or returns None
+        if not set_cookie_headers or set_cookie_headers == [None]:
+            # Try to get raw headers if available
+            if hasattr(response, 'raw') and hasattr(response.raw, '_original_response'):
+                set_cookie_headers = response.raw._original_response.msg.get_all('Set-Cookie') or []
+            else:
+                set_cookie_headers = []
+        
+        for header_value in set_cookie_headers:
+            if header_value:
+                # Parse each cookie from the header
+                # Format: "name=value; attribute=value; attribute"
+                for cookie_part in header_value.split(','):
+                    cookie_part = cookie_part.strip()
+                    if '=' in cookie_part:
+                        # Split only on the first '=' to handle values that might contain '='
+                        name_value = cookie_part.split(';')[0]  # Get just the name=value part
+                        if '=' in name_value:
+                            name, value = name_value.split('=', 1)
+                            cookies[name.strip()] = value.strip()
+        
+        return cookies
+    
+    def _get_robotic_headers(self) -> Optional[Dict[str, str]]:
+        """
+        Get the headers needed for API requests, including CSRF cookie and XSRF token.
+        This follows the same pattern as the TypeScript implementation.
         
         Returns:
-            str: The XSRF token, or None if not found
-            
-        Raises:
-            requests.RequestException: If the API request fails
+            dict: Headers dictionary with Cookie and X-XSRF-TOKEN, or None if failed
         """
-        # Check if we have a cached token
-        if self._cached_xsrf_token:
-            return self._cached_xsrf_token
+        # Check if we have cached headers
+        if self._cached_headers:
+            return self._cached_headers
             
-        # Construct the endpoint URL
-        endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files"
+        # Use the robots endpoint like in the TypeScript code
+        robots_url = f"{self.base_url}/projects/{self.project_id}/robots"
         
-        # Set up headers
+        # Set up initial headers
         headers = {
-            "Content-Type": "application/json",
+            "Cookie": "",  # Start with empty cookie
             "X-Authorization": self.personal_access_token
         }
         
-        # Set up query parameters
-        params = {
-            "branch": "main",
-            "sharedCredentials": "true"
-        }
-        
         try:
-            # Make the GET request
-            response = requests.get(endpoint, headers=headers, params=params)
-            
-            # Raise an exception for bad status codes
+            # Make the GET request to fetch CSRF token
+            response = requests.get(robots_url, headers=headers)
             response.raise_for_status()
             
-            # Extract XSRF token from Set-Cookie header
-            xsrf_token = None
-            set_cookie_header = response.headers.get('Set-Cookie')
+            # Parse cookies from Set-Cookie headers
+            cookies = self._parse_cookies_from_set_cookie_headers(response)
             
-            if set_cookie_header:
-                # Look for PACE-XSRF-TOKEN in the Set-Cookie header
-                # Pattern: PACE-XSRF-TOKEN=token_value; other_attributes
-                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
-                if match:
-                    xsrf_token = match.group(1)
-                    self._cached_xsrf_token = xsrf_token
-                    token_display = f"{xsrf_token[:10]}..." if len(xsrf_token) > 10 else xsrf_token
-                    logger.console(f"Retrieved XSRF token from Set-Cookie: {token_display}")
-                else:
-                    logger.console("Warning: PACE-XSRF-TOKEN not found in Set-Cookie header")
-                    logger.console(f"Set-Cookie header: {set_cookie_header}")
-            else:
-                logger.console("Warning: No Set-Cookie header found in response")
-                # Log available headers for debugging
-                logger.console(f"Available headers: {list(response.headers.keys())}")
+            logger.console(f"Parsed cookies: {list(cookies.keys())}")
             
-            return xsrf_token
+            # Get the CSRF and XSRF cookies
+            csrf_cookie = cookies.get('_pace-csrf')
+            xsrf_token = cookies.get('PACE-XSRF-TOKEN')
+            
+            if not xsrf_token:
+                logger.console("Warning: PACE-XSRF-TOKEN not found in cookies")
+                logger.console(f"Available cookies: {cookies}")
+                return None
+            
+            # Build the cookie header
+            cookie_parts = []
+            if csrf_cookie:
+                cookie_parts.append(f"_pace-csrf={csrf_cookie}")
+            cookie_parts.append(f"PACE-XSRF-TOKEN={xsrf_token}")
+            
+            # Create the headers for subsequent requests
+            robotic_headers = {
+                "Content-Type": "application/json",
+                "X-Authorization": self.personal_access_token,
+                "Cookie": "; ".join(cookie_parts),
+                "X-XSRF-TOKEN": xsrf_token
+            }
+            
+            # Cache the headers
+            self._cached_headers = robotic_headers
+            
+            token_display = f"{xsrf_token[:10]}..." if len(xsrf_token) > 10 else xsrf_token
+            logger.console(f"Successfully retrieved XSRF token: {token_display}")
+            logger.console(f"Cookie header: {robotic_headers['Cookie']}")
+            
+            return robotic_headers
             
         except requests.RequestException as e:
-            logger.console(f"Failed to retrieve XSRF token: {e}")
-            raise
+            logger.console(f"Failed to retrieve robotic headers: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.console(f"Response status: {e.response.status_code}")
+                logger.console(f"Response headers: {dict(e.response.headers)}")
+            return None
 
     def get_latest_commit_hash(self) -> Optional[str]:
         """
@@ -112,20 +156,15 @@ class CopadoRoboticTestingAPI:
         
         Returns:
             str: The latest commit hash, or None if the request fails
-            
-        Raises:
-            requests.RequestException: If the API request fails
-            KeyError: If the expected JSON structure is not found
-            ValueError: If the response cannot be parsed as JSON
         """
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files"
         
-        # Set up headers
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token
-        }
+        # Get the robotic headers (will fetch XSRF token if needed)
+        headers = self._get_robotic_headers()
+        if not headers:
+            logger.console("Failed to get robotic headers")
+            return None
         
         # Set up query parameters
         params = {
@@ -136,16 +175,7 @@ class CopadoRoboticTestingAPI:
         try:
             # Make the GET request
             response = requests.get(endpoint, headers=headers, params=params)
-            
-            # Raise an exception for bad status codes
             response.raise_for_status()
-            
-            # Try to cache XSRF token from Set-Cookie if available
-            set_cookie_header = response.headers.get('Set-Cookie')
-            if set_cookie_header and not self._cached_xsrf_token:
-                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
-                if match:
-                    self._cached_xsrf_token = match.group(1)
             
             # Parse the JSON response
             data = response.json()
@@ -157,6 +187,8 @@ class CopadoRoboticTestingAPI:
             
         except requests.RequestException as e:
             logger.console(f"API request failed: {e}")
+            # Clear cached headers on error in case they're stale
+            self._cached_headers = None
             raise
         except KeyError as e:
             logger.console(f"Expected key not found in response: {e}")
@@ -175,11 +207,11 @@ class CopadoRoboticTestingAPI:
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files"
         
-        # Set up headers
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token
-        }
+        # Get the robotic headers
+        headers = self._get_robotic_headers()
+        if not headers:
+            logger.console("Failed to get robotic headers")
+            return None
         
         # Set up query parameters
         params = {
@@ -192,13 +224,6 @@ class CopadoRoboticTestingAPI:
             response = requests.get(endpoint, headers=headers, params=params)
             response.raise_for_status()
             
-            # Try to cache XSRF token from Set-Cookie if available
-            set_cookie_header = response.headers.get('Set-Cookie')
-            if set_cookie_header and not self._cached_xsrf_token:
-                match = re.search(r'PACE-XSRF-TOKEN=([^;]+)', set_cookie_header)
-                if match:
-                    self._cached_xsrf_token = match.group(1)
-            
             # Parse the JSON response
             data = response.json()
             
@@ -207,6 +232,8 @@ class CopadoRoboticTestingAPI:
             
         except (requests.RequestException, KeyError, ValueError) as e:
             logger.console(f"Failed to retrieve branch info: {e}")
+            # Clear cached headers on error
+            self._cached_headers = None
             return None
 
     def _is_binary_file(self, file_path: str, force_binary: Optional[bool] = None) -> bool:
@@ -252,11 +279,6 @@ class CopadoRoboticTestingAPI:
             
         Returns:
             tuple: (file_content, encoding_type)
-            
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            UnicodeDecodeError: If text file can't be decoded as UTF-8
-            IOError: If file can't be read
         """
         if is_binary:
             # Read as binary and base64 encode
@@ -293,12 +315,6 @@ class CopadoRoboticTestingAPI:
             
         Returns:
             bool: True if upload was successful, False otherwise
-            
-        Raises:
-            FileNotFoundError: If the specified file doesn't exist
-            requests.RequestException: If the API request fails
-            UnicodeDecodeError: If text file cannot be decoded as UTF-8
-            IOError: If file cannot be read
         """
         # Check if file exists
         if not os.path.exists(local_file_path):
@@ -341,18 +357,6 @@ class CopadoRoboticTestingAPI:
         Upload a file to the Copado Robotic Testing repository with a custom repository path.
         
         DEPRECATED: Use save_file() with repository_path parameter instead.
-        
-        Args:
-            file_path (str): Path to the local file to upload
-            repository_path (str): Path where the file should be stored in the repository
-            author_name (str): Name of the commit author
-            author_email (str): Email of the commit author
-            commit_message (str): Commit message
-            parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
-            force_binary (bool, optional): Force binary (True) or text (False) mode. If None, auto-detect
-            
-        Returns:
-            bool: True if upload was successful, False otherwise
         """
         logger.console("Warning: save_file_with_custom_path() is deprecated. Use save_file() with repository_path parameter instead.")
         
@@ -376,34 +380,15 @@ class CopadoRoboticTestingAPI:
                            parent_commit_hash: str) -> bool:
         """
         Internal method to upload file content to the API.
-        
-        Args:
-            repository_path (str): Path in the repository
-            file_content (str): File content (text or base64 encoded)
-            encoding_type (str): Either "utf-8" or "base64"
-            author_name (str): Commit author name
-            author_email (str): Commit author email
-            commit_message (str): Commit message
-            parent_commit_hash (str): Parent commit hash
-            
-        Returns:
-            bool: True if successful, False otherwise
         """
-        # Get XSRF token - required for POST requests
-        xsrf_token = self._get_xsrf_token()
-        if not xsrf_token:
-            logger.console("Failed to retrieve XSRF token - POST request may fail")
+        # Get robotic headers (includes XSRF token and cookies)
+        headers = self._get_robotic_headers()
+        if not headers:
+            logger.console("Failed to get robotic headers - cannot proceed with upload")
             return False
         
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
-        
-        # Set up headers including XSRF token
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token,
-            "x-xsrf-token": xsrf_token
-        }
         
         # Set up query parameters
         params = {
@@ -443,6 +428,8 @@ class CopadoRoboticTestingAPI:
             if hasattr(e, 'response') and e.response is not None:
                 logger.console(f"Response status: {e.response.status_code}")
                 logger.console(f"Response: {e.response.text}")
+            # Clear cached headers on error
+            self._cached_headers = None
             raise
 
     def save_multiple_files(self, 
@@ -453,19 +440,6 @@ class CopadoRoboticTestingAPI:
                            parent_commit_hash: Optional[str] = None) -> bool:
         """
         Upload multiple files in a single commit.
-        
-        Args:
-            file_operations (List[Dict]): List of file operations with keys:
-                - 'local_path': Local file system path
-                - 'repo_path': Repository path (optional, uses filename if not provided)
-                - 'force_binary': Force binary mode (optional)
-            author_name (str): Name of the commit author
-            author_email (str): Email of the commit author
-            commit_message (str): Commit message
-            parent_commit_hash (str, optional): Parent commit hash. If None, will fetch latest
-            
-        Returns:
-            bool: True if upload was successful, False otherwise
         """
         # Get parent commit hash if not provided
         if parent_commit_hash is None:
@@ -474,10 +448,10 @@ class CopadoRoboticTestingAPI:
                 logger.console("Failed to retrieve latest commit hash")
                 return False
         
-        # Get XSRF token - required for POST requests
-        xsrf_token = self._get_xsrf_token()
-        if not xsrf_token:
-            logger.console("Failed to retrieve XSRF token - POST request may fail")
+        # Get robotic headers
+        headers = self._get_robotic_headers()
+        if not headers:
+            logger.console("Failed to get robotic headers - cannot proceed with upload")
             return False
         
         operations = []
@@ -513,13 +487,6 @@ class CopadoRoboticTestingAPI:
         # Construct the endpoint URL
         endpoint = f"{self.base_url}/projects/{self.project_id}/jobs/{self.job_id}/files/upload"
         
-        # Set up headers including XSRF token
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": self.personal_access_token,
-            "x-xsrf-token": xsrf_token
-        }
-        
         # Set up query parameters
         params = {
             "branch": "main"
@@ -551,11 +518,13 @@ class CopadoRoboticTestingAPI:
             if hasattr(e, 'response') and e.response is not None:
                 logger.console(f"Response status: {e.response.status_code}")
                 logger.console(f"Response: {e.response.text}")
+            # Clear cached headers on error
+            self._cached_headers = None
             raise
 
-    def clear_xsrf_cache(self):
+    def clear_headers_cache(self):
         """
-        Clear the cached XSRF token. Useful if the token expires or becomes invalid.
+        Clear the cached headers. Useful if tokens expire or become invalid.
         """
-        self._cached_xsrf_token = None
-        logger.console("XSRF token cache cleared")
+        self._cached_headers = None
+        logger.console("Headers cache cleared")
