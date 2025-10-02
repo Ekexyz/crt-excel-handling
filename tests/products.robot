@@ -1,11 +1,7 @@
 *** Settings ***
 Resource                ../resources/common.resource
 Library                 ExcelLibrary
-Library                 ../libraries/CopadoRoboticTestingAPI.py
-...                     personal_access_token=${pat}
-...                     project_id=75868
-...                     job_id=159936
-...                     debug_logging=True
+Library                 ../libraries/GitOperations.py
 Test Teardown           Close All Excel Documents
 Suite Setup             Setup Browser
 Suite Teardown          End Suite
@@ -18,13 +14,6 @@ ${git_branch}           main
 
 
 *** Test Cases ***
-Testing
-    [Documentation]
-    [Tags]
-    ${ch}=    Get Latest Commit Hash
-    ${cc}=    Get Branch Info
-
-
 Verify Products
     [Documentation]     Read product names from excel sheet and verify that those can be found from a webshop page
     ...                 ExcelLibrary keyword documentation:
@@ -71,9 +60,4 @@ Update Product Id
     Close All Excel Documents
 
     # Upload the to Git
-    CopadoRoboticTestingAPI.Save File  
-    ...                  local_file_path=${excel_worksheet}
-    ...                  author_name=Erkka Karimäki
-    ...                  author_email=ekarimaki@copado.com
-    ...                  commit_message=Updating Excel file from CRT LT
-    ...                  repository_path=files/products_worksheet.xlsx
+    Commit and Push  ${excel_worksheet}  main
