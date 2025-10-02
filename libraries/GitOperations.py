@@ -7,11 +7,11 @@ class GitOperations(object):
 
     def __init__(self):
         self._project_name = str(os.environ.get("SCRIPTS"))
-
+        logger.console(f'project: {self._project_name}')
         # Execution path is different in normal test runs and in Live Testing,
         # and we need to take that into account
         self._project_path = os.getcwd()
-
+        logger.console(f'path: {self._project_path}')
         # SCRIPTS env variable contains the suite name (except locally)
         if self._project_name != "None":
             if self._project_path == "/home/services/suite/tests":
@@ -21,7 +21,7 @@ class GitOperations(object):
                 self._project_path = os.path.join(os.getcwd(), self._project_name)
 
         logger.console(self._project_path)
-        self._data_path = os.path.join(self._project_path, "data/")
+        self._data_path = os.path.join(self._project_path, "files/")
         logger.console(self._data_path)
 
     @keyword
