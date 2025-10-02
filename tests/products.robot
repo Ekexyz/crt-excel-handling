@@ -60,4 +60,4 @@ Update Product Id
     Close All Excel Documents
 
     # Upload the to Git
-    Commit and Push  ${excel_worksheet}  main
+    Commit and Push  products_worksheet.xlsx  main
